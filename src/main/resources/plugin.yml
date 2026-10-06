@@ -1,0 +1,16 @@
+name: AdminSecurity-AttackerLab
+version: 1.2.5
+main: com.ranggadev.adminsecattacker.AttackerLabPlugin
+api-version: '1.21'
+author: Ranggadev
+description: Safe, AdminSecurity-specific authorization and detection test harness. Synthetic events only; never executes tested commands.
+softdepend: [AdminSecurity]
+commands:
+  asattacker:
+    description: Run the AdminSecurity-specific security test harness.
+    usage: /asattacker <status|run|integrity|state|network|performance|integration|report|help>
+    permission: adminsec.attackerlab.run
+permissions:
+  adminsec.attackerlab.run:
+    description: Run the AdminSecurity AttackerLab test harness.
+    default: op
