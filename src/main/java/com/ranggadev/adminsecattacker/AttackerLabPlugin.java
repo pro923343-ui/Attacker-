@@ -18,6 +18,7 @@ import com.ranggadev.adminsecattacker.simulation.StateSimulationResult;
 import com.ranggadev.adminsecattacker.simulation.TransactionState;
 import com.ranggadev.adminsecattacker.integration.IntegrationContract;
 import com.ranggadev.adminsecattacker.integration.IntegrationStatus;
+import com.ranggadev.adminsecattacker.integration.IntegrationContractValidator;
 import com.ranggadev.adminsecattacker.auth.AuthorizationContract;
 import com.ranggadev.adminsecattacker.network.AnomalyProfile;
 import com.ranggadev.adminsecattacker.network.AnomalySimulationResult;
@@ -157,14 +158,14 @@ public final class AttackerLabPlugin extends JavaPlugin implements Listener {
         writeReport();
         long failed = results.stream().filter(r -> r.status().equals("FAIL_NOT_BLOCKED")).count();
         sender.sendMessage(ChatColor.GOLD + "=== Result ===");
-        sender.sendMessage(failed == 0 ? ChatColor.GREEN + "No authorization test failed." : ChatColor.RED + failed + " authorization test(s) were NOT blocked.");
+        sender.sendMessage(failed == 0 ? ChatColor.GREEN + "No authorization test failed." : ChatColor.RED.toString() + failed + " authorization test(s) were NOT blocked.");
         sender.sendMessage(ChatColor.GRAY + "Report: " + reportFile.toAbsolutePath());
         sender.sendMessage(ChatColor.GRAY + "IMPORTANT: FAIL means 'security handler did not cancel the synthetic event'; it does not mean a real command was executed.");
     }
 
     private String format(Result r) {
         ChatColor c = r.status().equals("FAIL_NOT_BLOCKED") ? ChatColor.RED : (r.status().equals("PASS_BLOCKED") ? ChatColor.GREEN : ChatColor.YELLOW);
-        return c + "[" + r.status() + "] " + r.id() + " " + ChatColor.GRAY + r.command();
+        return c + "[" + r.status() + "] " + r.id() + " " + ChatColor.GRAY + r.input();
     }
 
 
