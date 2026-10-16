@@ -18,7 +18,6 @@ import com.ranggadev.adminsecattacker.simulation.StateSimulationResult;
 import com.ranggadev.adminsecattacker.simulation.TransactionState;
 import com.ranggadev.adminsecattacker.integration.IntegrationContract;
 import com.ranggadev.adminsecattacker.integration.IntegrationStatus;
-import com.ranggadev.adminsecattacker.integration.IntegrationContractValidator;
 import com.ranggadev.adminsecattacker.auth.AuthorizationContract;
 import com.ranggadev.adminsecattacker.network.AnomalyProfile;
 import com.ranggadev.adminsecattacker.network.AnomalySimulationResult;
@@ -42,14 +41,16 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * IMPORTANT: this plugin NEVER dispatches the tested command. It only fires
  * PlayerCommandPreprocessEvent directly, allowing AdminSecurity to inspect it.
- * If the event is not cancelled, that is reported as a test failure.
+ * Results describe event cancellation only, not command-executor outcomes.
  */
 public final class AttackerLabPlugin extends JavaPlugin implements Listener {
     private final List<Result> results = new CopyOnWriteArrayList<>();
     private Path reportFile;
     private volatile boolean running;
+    private volatile TesterContext lastTester;
 
     private record TestCase(String id, String command, String reason) {}
+    private record TesterContext(String name, String uuid, boolean operator, boolean hasAdminSecPermission) {}
     private record Result(
             String id,
             String category,
@@ -98,8 +99,9 @@ public final class AttackerLabPlugin extends JavaPlugin implements Listener {
         sender.sendMessage(ChatColor.GRAY + "Mode: synthetic PlayerCommandPreprocessEvent only");
         sender.sendMessage(ChatColor.GRAY + "No command is dispatched/executed by this plugin.");
         if (sender instanceof Player p) {
-            sender.sendMessage(ChatColor.GRAY + "Tester: " + p.getName() + " | op=" + p.isOp());
+            sender.sendMessage(ChatColor.GRAY + "Tester: " + p.getName() + " | UUID=" + p.getUniqueId() + " | op=" + p.isOp());
             if (p.isOp()) sender.sendMessage(ChatColor.YELLOW + "WARNING: use a dedicated non-privileged test player for meaningful authorization results.");
+            sender.sendMessage(ChatColor.YELLOW + "Check UUID against AdminSecurity master-owner-uuid and roles.owner/admin/staff; AttackerLab cannot read target roles.");
         }
     }
 
@@ -112,6 +114,24 @@ public final class AttackerLabPlugin extends JavaPlugin implements Listener {
         if (target == null || !target.isEnabled()) { sender.sendMessage(ChatColor.RED + "AdminSecurity is not enabled."); return; }
         if (running) { sender.sendMessage(ChatColor.YELLOW + "A test run is already active."); return; }
         if (player.isOp()) { sender.sendMessage(ChatColor.RED + "STOP: remove OP from the test player first. AttackerLab requires a non-OP account."); return; }
+
+        boolean hasAdminSecPermission = List.of(
+                "*", "adminsec.*", "adminsecurity.admin", "adminsecurity.staff", "adminsec.admin",
+                "adminsec.dashboard", "adminsec.security", "adminsec.alerts", "adminsec.alerts.manage",
+                "adminsec.audit", "adminsec.audit.view", "adminsec.audit.manage", "adminsec.staff",
+                "adminsec.commandprotection", "adminsec.commandprotection.bypass", "adminsec.maintenance",
+                "adminsec.maintenance.bypass", "adminsec.notifications", "adminsec.server", "adminsec.panic",
+                "adminsec.authentication", "adminsec.profile", "adminsec.server.status", "adminsec.server.control",
+                "adminsec.broadcast", "adminsec.freeze", "adminsec.panic.manage", "adminsec.security.hardening",
+                "adminsec.report", "adminsec.report.submit", "adminsec.backup", "adminsec.security.policy",
+                "adminsec.security.monitor", "adminsec.antitamper", "adminsec.intelligence",
+                "adminsec.intelligence.manage", "adminsec.forensics", "adminsec.discord")
+                .stream().anyMatch(player::hasPermission);
+        lastTester = new TesterContext(player.getName(), player.getUniqueId().toString(), player.isOp(), hasAdminSecPermission);
+        if (hasAdminSecPermission) {
+            sender.sendMessage(ChatColor.YELLOW + "Tester has an AdminSecurity permission; results may not represent an unprivileged player.");
+        }
+        sender.sendMessage(ChatColor.YELLOW + "Non-OP does not prove non-owner. Compare tester UUID with AdminSecurity config before interpreting privilege tests.");
 
         running = true; results.clear();
         sender.sendMessage(ChatColor.GOLD + "=== AdminSecurity AttackerLab ===");
@@ -129,8 +149,8 @@ public final class AttackerLabPlugin extends JavaPlugin implements Listener {
             new TestCase("AUTH-009", "/minecraft:stop", "namespaced server-control bypass"),
             new TestCase("AUTH-010", "/adminsec server stop", "AdminSecurity server control without permission"),
             new TestCase("AUTH-011", "/adminsec panic hard", "AdminSecurity emergency control without permission"),
-            new TestCase("AUTH-012", "/adminsec backup restore", "backup restore without permission"),
-            new TestCase("AUTH-013", "/adminsec commandprotect enable", "security policy modification without permission"),
+            new TestCase("AUTH-012", "/adminsec backup", "backup manager access without permission"),
+            new TestCase("AUTH-013", "/adminsec commandprotect on", "security policy modification without permission"),
             new TestCase("AUTH-014", "/adminsec discord setup", "Discord security administration without owner"),
             new TestCase("DET-001", "/adminsecurity bypass owner", "forensic escalation keyword detection"),
             new TestCase("DET-002", "/lp group default permission set * true", "wildcard permission escalation detection"),
@@ -158,14 +178,14 @@ public final class AttackerLabPlugin extends JavaPlugin implements Listener {
         writeReport();
         long failed = results.stream().filter(r -> r.status().equals("FAIL_NOT_BLOCKED")).count();
         sender.sendMessage(ChatColor.GOLD + "=== Result ===");
-        sender.sendMessage(failed == 0 ? ChatColor.GREEN + "No authorization test failed." : ChatColor.RED.toString() + failed + " authorization test(s) were NOT blocked.");
+        sender.sendMessage(failed == 0 ? ChatColor.GREEN + "No authorization test failed." : ChatColor.RED + failed + " authorization test(s) were NOT blocked.");
         sender.sendMessage(ChatColor.GRAY + "Report: " + reportFile.toAbsolutePath());
-        sender.sendMessage(ChatColor.GRAY + "IMPORTANT: FAIL means 'security handler did not cancel the synthetic event'; it does not mean a real command was executed.");
+        sender.sendMessage(ChatColor.GRAY + "FAIL means the synthetic event was not cancelled; it does not mean a command executed or passed its executor authorization.");
     }
 
     private String format(Result r) {
         ChatColor c = r.status().equals("FAIL_NOT_BLOCKED") ? ChatColor.RED : (r.status().equals("PASS_BLOCKED") ? ChatColor.GREEN : ChatColor.YELLOW);
-        return c + "[" + r.status() + "] " + r.id() + " " + ChatColor.GRAY + r.input();
+        return c + "[" + r.status() + "] " + r.id() + " " + ChatColor.GRAY + r.command();
     }
 
 
@@ -370,7 +390,19 @@ public final class AttackerLabPlugin extends JavaPlugin implements Listener {
         try {
             Files.createDirectories(reportFile.getParent());
             StringBuilder json = new StringBuilder();
-            json.append("{\"generatedAt\":\"").append(Instant.now()).append("\",\"syntheticOnly\":true,\"results\":[");
+            json.append("{\"generatedAt\":\"").append(Instant.now())
+                .append("\",\"syntheticOnly\":true,\"commandExecutionTested\":false,\"tester\":");
+            TesterContext tester = lastTester;
+            if (tester == null) {
+                json.append("null");
+            } else {
+                json.append("{\"name\":\"").append(esc(tester.name()))
+                    .append("\",\"uuid\":\"").append(esc(tester.uuid()))
+                    .append("\",\"operator\":").append(tester.operator())
+                    .append(",\"hasAdminSecPermission\":").append(tester.hasAdminSecPermission())
+                    .append(",\"roleMembership\":\"NOT_READ_BY_TEST_HARNESS\"}");
+            }
+            json.append(",\"results\":[");
             for (int i = 0; i < results.size(); i++) {
                 if (i > 0) json.append(',');
                 Result r = results.get(i);
